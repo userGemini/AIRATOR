@@ -444,12 +444,12 @@
    KONFIGURASI MQTT — ubah di sini
    ====================================================== */
 var MQTT_CONFIG = {
-  host:     "broker.hivemq.com",   // host broker
+  host:     "eb4e1d970eb448f99b741a9ba4d6eacc.s1.eu.hivemq.cloud",   // host broker
   port:     8884,                   // port WebSocket (8884 = wss, 8083 = ws)
   path:     "/mqtt",
   tls:      true,                   // true = wss://, false = ws://
-  username: "",                     // kosongkan jika tidak pakai auth
-  password: "",                     // kosongkan jika tidak pakai auth
+  username: "AIRATOR",                     // kosongkan jika tidak pakai auth
+  password: "airatorPPNS1",                     // kosongkan jika tidak pakai auth
   clientId: "aquascope-" + Math.random().toString(16).slice(2,10),
   prefix:   "aquascope/sensors",    // prefix topik sensor
   mode:     "single",               // "single" atau "json"
@@ -463,9 +463,9 @@ var MQTT_CONFIG = {
   voltTopic:  "aquascope/power/voltage",
   ampTopic:   "aquascope/power/current",
   wattTopic:  "aquascope/power/watt",
-  // Koordinat node default
-  defaultLat: -7.2575,
-  defaultLng: 112.7521
+  // Koordinat node default -7.278811, 112.793503
+  defaultLat: -7.278811,
+  defaultLng: 112.793503
 };
 
 /* ======================================================
