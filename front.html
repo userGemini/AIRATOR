@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AQUASCOPE · Monitoring Kualitas Air IoT</title>
+<meta name="theme-color" content="#061a26">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+
+<style>
+  :root{
+    --depth:#061a26;
+    --current:#0d3349;
+    --surface:#123f55;
+    --surface-2:#1a526c;
+    --foam:#eef6f6;
+    --foam-dim:#93b2c0;
+    --tide:#2dd4bf;
+    --tide-dim:rgba(45,212,191,.16);
+    --coral:#fb7185;
+    --coral-dim:rgba(251,113,133,.16);
+    --amber:#fbbf24;
+    --amber-dim:rgba(251,191,36,.16);
+    --line:rgba(255,255,255,.09);
+    --radius:18px;
+    --font-display:'Space Grotesk',sans-serif;
+    --font-body:'Inter',sans-serif;
+    --font-mono:'JetBrains Mono',monospace;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:
+      radial-gradient(ellipse 1200px 600px at 50% -10%, #0f3f57 0%, var(--depth) 60%) ,
+      var(--depth);
+    color:var(--foam);
+    font-family:var(--font-body);
+    min-height:100vh;
+  }
+  a{color:var(--tide);}
+  button{font-family:var(--font-body);cursor:pointer;}
+  input,select{font-family:var(--font-mono);}
+  ::selection{background:var(--tide-dim);}
+  :focus-visible{outline:2px solid var(--tide);outline-offset:2px;}
+
+  /* ---------- Header ---------- */
+  header.topbar{
+    position:relative;
+    background:linear-gradient(180deg, #0a2a3c 0%, var(--depth) 100%);
+    border-bottom:1px solid var(--line);
+    padding:18px 24px 30px;
+    overflow:hidden;
+  }
+  .topbar-row{
+    max-width:1400px;margin:0 auto;
+    display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;
+  }
+  .brand{display:flex;align-items:center;gap:12px;}
+  .brand-mark{
+    width:38px;height:38px;border-radius:10px;
+    background:linear-gradient(135deg,var(--tide),#0e7c70);
+    display:flex;align-items:center;justify-content:center;
+    font-family:var(--font-display);font-weight:700;color:#03201b;font-size:18px;
+    box-shadow:0 0 22px rgba(45,212,191,.35);
+    flex-shrink:0;
+  }
+  .brand h1{
+    font-family:var(--font-display);font-weight:700;font-size:22px;letter-spacing:.01em;margin:0;
+  }
+  .brand p{margin:1px 0 0;font-size:12.5px;color:var(--foam-dim);}
+
+  .topbar-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+
+  .status-pill{
+    display:flex;align-items:center;gap:8px;
+    background:var(--current);border:1px solid var(--line);
+    padding:8px 14px;border-radius:999px;font-size:12.5px;font-family:var(--font-mono);
+    color:var(--foam-dim);
+  }
+  .status-dot{width:8px;height:8px;border-radius:50%;background:var(--foam-dim);flex-shrink:0;}
+  .status-pill[data-state="demo"] .status-dot{background:var(--amber);box-shadow:0 0 0 0 var(--amber);animation:pulse-amber 1.6s infinite;}
+  .status-pill[data-state="connecting"] .status-dot{background:var(--amber);animation:pulse-amber 1s infinite;}
+  .status-pill[data-state="live"] .status-dot{background:var(--tide);box-shadow:0 0 0 0 var(--tide);animation:pulse-tide 1.6s infinite;}
+  .status-pill[data-state="offline"] .status-dot{background:var(--coral);}
+  @keyframes pulse-tide{0%{box-shadow:0 0 0 0 rgba(45,212,191,.55);}70%{box-shadow:0 0 0 9px rgba(45,212,191,0);}100%{box-shadow:0 0 0 0 rgba(45,212,191,0);}}
+  @keyframes pulse-amber{0%{box-shadow:0 0 0 0 rgba(251,191,36,.55);}70%{box-shadow:0 0 0 9px rgba(251,191,36,0);}100%{box-shadow:0 0 0 0 rgba(251,191,36,0);}}
+
+  .btn{
+    border:1px solid var(--line);background:var(--current);color:var(--foam);
+    padding:9px 16px;border-radius:10px;font-size:13.5px;font-weight:500;
+    display:inline-flex;align-items:center;gap:8px;transition:border-color .2s, background .2s;
+  }
+  .btn:hover{border-color:var(--tide);}
+  .btn.primary{background:var(--tide);color:#03201b;border-color:var(--tide);font-weight:600;}
+  .btn.primary:hover{background:#3fe0c9;}
+  .btn.ghost{background:transparent;}
+  .btn.danger{color:var(--coral);}
+  .btn.danger:hover{border-color:var(--coral);}
+  .btn:disabled{opacity:.45;cursor:not-allowed;}
+
+  .wave-wrap{position:absolute;left:0;right:0;bottom:-1px;height:26px;overflow:hidden;line-height:0;}
+  .wave-wrap svg{width:200%;height:100%;animation:wave-shift 14s linear infinite;}
+  @media (prefers-reduced-motion:reduce){.wave-wrap svg{animation:none;}}
+  @keyframes wave-shift{from{transform:translateX(0);}to{transform:translateX(-50%);}}
+
+  /* ---------- Layout ---------- */
+  .dashboard{
+    max-width:1400px;margin:0 auto;padding:22px 24px 60px;
+    display:grid;grid-template-columns:minmax(280px,38%) 1fr;gap:20px;align-items:start;
+  }
+  @media (max-width:980px){
+    .dashboard{grid-template-columns:1fr;}
+  }
+
+  .panel{
+    background:linear-gradient(160deg,var(--current),#0a2c3e);
+    border:1px solid var(--line);border-radius:var(--radius);
+    padding:16px;
+  }
+  .panel h2{
+    font-family:var(--font-display);font-size:14px;letter-spacing:.06em;text-transform:uppercase;
+    color:var(--foam-dim);margin:2px 4px 12px;font-weight:600;
+  }
+
+  #map{
+    height:320px;border-radius:12px;overflow:hidden;border:1px solid var(--line);
+  }
+  .map-meta{
+    display:flex;justify-content:space-between;gap:10px;margin-top:10px;padding:0 4px;
+    font-family:var(--font-mono);font-size:11.5px;color:var(--foam-dim);flex-wrap:wrap;
+  }
+
+  .sensor-grid{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:14px;
+  }
+  @media (max-width:980px){.sensor-grid{grid-template-columns:repeat(3,1fr);}}
+  @media (max-width:640px){.sensor-grid{grid-template-columns:repeat(2,1fr);}}
+  @media (max-width:420px){.sensor-grid{grid-template-columns:1fr;}}
+
+  .card{
+    position:relative;
+    background:linear-gradient(165deg,var(--surface),var(--current));
+    border:1px solid var(--line);border-radius:var(--radius);
+    padding:14px 14px 12px;
+    transition:box-shadow .35s ease, opacity .3s ease, border-color .35s ease;
+  }
+  .card[data-level="good"]{border-color:rgba(45,212,191,.4);box-shadow:0 0 0 1px rgba(45,212,191,.08), 0 0 26px -8px rgba(45,212,191,.45);}
+  .card[data-level="warning"]{border-color:rgba(251,191,36,.4);box-shadow:0 0 0 1px rgba(251,191,36,.08), 0 0 26px -8px rgba(251,191,36,.4);}
+  .card[data-level="danger"]{border-color:rgba(251,113,133,.45);box-shadow:0 0 0 1px rgba(251,113,133,.08), 0 0 26px -8px rgba(251,113,133,.5);}
+  .card.stale{opacity:.5;}
+
+  .card-head{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:2px;}
+  .card-head h3{font-family:var(--font-display);font-size:14px;font-weight:600;margin:0;}
+  .card-head .level-tag{
+    font-family:var(--font-mono);font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
+    padding:2px 6px;border-radius:5px;color:var(--foam-dim);background:rgba(255,255,255,.06);
+  }
+  .card[data-level="good"] .level-tag{color:var(--tide);background:var(--tide-dim);}
+  .card[data-level="warning"] .level-tag{color:var(--amber);background:var(--amber-dim);}
+  .card[data-level="danger"] .level-tag{color:var(--coral);background:var(--coral-dim);}
+
+  .gauge-wrap{display:block;margin:2px auto 0;}
+  .gauge-wrap svg{display:block;width:100%;height:auto;}
+
+  .value-row{display:flex;align-items:baseline;justify-content:center;gap:4px;margin-top:-22px;}
+  .value-row .num{font-family:var(--font-mono);font-size:26px;font-weight:600;}
+  .value-row .unit{font-family:var(--font-mono);font-size:11.5px;color:var(--foam-dim);}
+
+  .sparkline{display:block;width:100%;height:26px;margin-top:6px;}
+  .sparkline polyline{fill:none;stroke-width:1.6;stroke-linejoin:round;stroke-linecap:round;}
+
+  .updated{font-family:var(--font-mono);font-size:10.5px;color:var(--foam-dim);text-align:center;margin-top:6px;}
+
+  /* ---------- Settings drawer ---------- */
+  .scrim{
+    position:fixed;inset:0;background:rgba(2,10,16,.55);backdrop-filter:blur(2px);
+    opacity:0;pointer-events:none;transition:opacity .25s ease;z-index:40;
+  }
+  .scrim.open{opacity:1;pointer-events:auto;}
+
+  .drawer{
+    position:fixed;top:0;right:0;height:100%;width:min(420px,92vw);
+    background:linear-gradient(180deg,#0c3146,var(--depth));
+    border-left:1px solid var(--line);
+    transform:translateX(100%);transition:transform .3s ease;
+    z-index:50;display:flex;flex-direction:column;
+  }
+  .drawer.open{transform:translateX(0);}
+  .drawer-head{
+    padding:18px 20px;border-bottom:1px solid var(--line);
+    display:flex;justify-content:space-between;align-items:center;
+  }
+  .drawer-head h2{font-family:var(--font-display);font-size:17px;margin:0;}
+  .drawer-body{padding:16px 20px 28px;overflow-y:auto;flex:1;}
+
+  .field{margin-bottom:14px;}
+  .field label{display:block;font-size:12px;color:var(--foam-dim);margin-bottom:5px;}
+  .field input[type=text],.field input[type=number],.field input[type=password],.field select{
+    width:100%;padding:9px 10px;border-radius:8px;border:1px solid var(--line);
+    background:var(--current);color:var(--foam);font-size:13px;
+  }
+  .field-row{display:flex;gap:10px;}
+  .field-row .field{flex:1;}
+  .checkrow{display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:13px;color:var(--foam-dim);}
+  .checkrow input{accent-color:var(--tide);}
+
+  fieldset{border:1px dashed var(--line);border-radius:10px;padding:12px;margin:0 0 16px;}
+  legend{padding:0 6px;font-size:11.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--foam-dim);}
+
+  .topic-ref{
+    font-family:var(--font-mono);font-size:11px;color:var(--tide);
+    background:rgba(45,212,191,.08);border-radius:6px;padding:6px 8px;margin-top:4px;word-break:break-all;
+  }
+  .hint{font-size:11.5px;color:var(--foam-dim);line-height:1.5;margin:6px 0 0;}
+  code{background:rgba(255,255,255,.08);padding:1px 5px;border-radius:4px;font-family:var(--font-mono);font-size:11px;}
+
+  .drawer-actions{display:flex;gap:10px;margin:14px 0 6px;}
+  .drawer-actions .btn{flex:1;justify-content:center;}
+
+  .log-box{
+    margin-top:10px;background:#04141c;border:1px solid var(--line);border-radius:8px;
+    max-height:150px;overflow-y:auto;padding:8px 10px;font-family:var(--font-mono);font-size:10.5px;
+    color:var(--foam-dim);
+  }
+  .log-box div{padding:2px 0;border-bottom:1px solid rgba(255,255,255,.04);}
+  .log-box div:last-child{border-bottom:none;}
+
+  footer{
+    max-width:1400px;margin:0 auto;padding:0 24px 36px;
+    font-size:11.5px;color:var(--foam-dim);text-align:center;
+  }
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-row">
+    <div class="brand">
+      <div class="brand-mark">A</div>
+      <div>
+        <h1>AQUASCOPE</h1>
+        <p>Monitoring kualitas air real-time &middot; HiveMQ MQTT</p>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <div class="status-pill" id="statusPill" data-state="demo">
+        <span class="status-dot"></span>
+        <span id="statusText">Mode Simulasi</span>
+      </div>
+      <button class="btn" id="openSettings" aria-haspopup="dialog">⚙ Pengaturan Broker</button>
+    </div>
+  </div>
+  <div class="wave-wrap" aria-hidden="true">
+    <svg viewBox="0 0 1600 60" preserveAspectRatio="none">
+      <path d="M0,30 C 200,60 400,0 600,30 C 800,60 1000,0 1200,30 C 1400,60 1500,15 1600,30 L1600,60 L0,60 Z
+               M1600,30 C 1800,60 2000,0 2200,30 C 2400,60 2600,0 2800,30 C 3000,60 3100,15 3200,30 L3200,60 L1600,60 Z"
+            fill="#0a2a3c"/>
+    </svg>
+  </div>
+</header>
+
+<main class="dashboard">
+
+  <section class="panel" aria-label="Lokasi node">
+    <h2>Lokasi Node</h2>
+    <div id="map"></div>
+    <div class="map-meta">
+      <span id="mapCoords">Lat —, Lng —</span>
+      <span id="mapSource">sumber: default</span>
+    </div>
+  </section>
+
+  <section aria-label="Pembacaan sensor">
+    <div class="sensor-grid" id="sensorGrid"></div>
+  </section>
+
+</main>
+
+<footer>
+  Dibuat untuk koneksi ke broker HiveMQ via MQTT-over-WebSocket. Mode simulasi aktif secara default agar tampilan langsung hidup — sambungkan broker asli lewat panel Pengaturan.
+</footer>
+
+<!-- ---------------- Settings Drawer ---------------- -->
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-label="Pengaturan broker MQTT">
+  <div class="drawer-head">
+    <h2>Pengaturan Broker</h2>
+    <button class="btn ghost" id="closeSettings" aria-label="Tutup">✕</button>
+  </div>
+  <div class="drawer-body">
+
+    <fieldset>
+      <legend>Koneksi HiveMQ</legend>
+      <div class="field">
+        <label for="fHost">Host Broker</label>
+        <input type="text" id="fHost" value="broker.hivemq.com">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="fPort">Port WebSocket</label>
+          <input type="number" id="fPort" value="8884">
+        </div>
+        <div class="field">
+          <label for="fPath">Path</label>
+          <input type="text" id="fPath" value="/mqtt">
+        </div>
+      </div>
+      <div class="checkrow">
+        <input type="checkbox" id="fTLS" checked>
+        <label for="fTLS">Gunakan TLS (wss://) — wajib untuk HiveMQ Cloud</label>
+      </div>
+      <div class="field">
+        <label for="fClientId">Client ID</label>
+        <input type="text" id="fClientId">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="fUser">Username (opsional)</label>
+          <input type="text" id="fUser" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="fPass">Password (opsional)</label>
+          <input type="password" id="fPass" autocomplete="off">
+        </div>
+      </div>
+      <p class="hint">Broker publik <code>broker.hivemq.com</code> tidak butuh autentikasi tapi bersifat terbuka untuk semua orang — pakai HiveMQ Cloud + username/password untuk data produksi.</p>
+    </fieldset>
+
+    <fieldset>
+      <legend>Pemetaan Topik</legend>
+      <div class="field">
+        <label for="fPrefix">Prefix Topik</label>
+        <input type="text" id="fPrefix" value="aquascope/sensors">
+      </div>
+      <div class="field">
+        <label for="fMode">Format Payload</label>
+        <select id="fMode">
+          <option value="single" selected>Satu topik per sensor (angka biasa)</option>
+          <option value="json">Satu topik gabungan (JSON)</option>
+        </select>
+      </div>
+
+      <div id="singleTopicRef"></div>
+
+      <div class="field" id="jsonTopicField" style="display:none;">
+        <label for="fJsonTopic">Topik JSON Gabungan</label>
+        <input type="text" id="fJsonTopic" value="aquascope/sensors/all">
+        <p class="hint">Payload contoh: <code>{"ph":7.2,"turbidity":3.1,"tds":420,"salinity":0.3,"do":6.8,"temp":27.5,"lat":-7.2575,"lng":112.7521}</code></p>
+      </div>
+
+      <div class="field">
+        <label for="fLocTopic">Topik Lokasi (mode per-sensor)</label>
+        <input type="text" id="fLocTopic" value="aquascope/sensors/location">
+        <p class="hint">Payload: <code>-7.2575,112.7521</code> atau JSON <code>{"lat":-7.2575,"lng":112.7521}</code></p>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="fLat">Lat default</label>
+          <input type="number" step="any" id="fLat" value="-7.2575">
+        </div>
+        <div class="field">
+          <label for="fLng">Lng default</label>
+          <input type="number" step="any" id="fLng" value="112.7521">
+        </div>
+      </div>
+    </fieldset>
+
+    <div class="drawer-actions">
+      <button class="btn primary" id="btnConnect">Sambungkan</button>
+      <button class="btn danger" id="btnDisconnect" disabled>Putuskan</button>
+    </div>
+    <div class="checkrow" style="margin-top:4px;">
+      <input type="checkbox" id="fDemo" checked>
+      <label for="fDemo">Mode Simulasi (data acak untuk pratinjau)</label>
+    </div>
+
+    <p class="hint">Uji cepat dari command line (port MQTT biasa, bukan WebSocket):<br>
+      <code>mosquitto_pub -h broker.hivemq.com -p 1883 -t aquascope/sensors/ph -m "7.2"</code>
+    </p>
+
+    <fieldset>
+      <legend>Log Pesan</legend>
+      <div class="log-box" id="logBox"></div>
+    </fieldset>
+
+  </div>
+</aside>
+
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/mqtt@5.10.1/dist/mqtt.min.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  /* ============ Konfigurasi sensor ============ */
+  var SENSORS = [
+    { id:"ph", label:"pH", unit:"", min:0, max:14, decimals:2, suffix:"ph",
+      zones:[{from:0,to:5.5,level:"danger"},{from:5.5,to:6.5,level:"warning"},{from:6.5,to:8.5,level:"good"},{from:8.5,to:9.5,level:"warning"},{from:9.5,to:14,level:"danger"}],
+      demoBase:7.2, demoJitter:0.25 },
+    { id:"turbidity", label:"Turbidity", unit:"NTU", min:0, max:50, decimals:1, suffix:"turbidity",
+      zones:[{from:0,to:5,level:"good"},{from:5,to:20,level:"warning"},{from:20,to:50,level:"danger"}],
+      demoBase:4, demoJitter:2.5 },
+    { id:"tds", label:"TDS", unit:"ppm", min:0, max:2000, decimals:0, suffix:"tds",
+      zones:[{from:0,to:500,level:"good"},{from:500,to:1000,level:"warning"},{from:1000,to:2000,level:"danger"}],
+      demoBase:380, demoJitter:60 },
+    { id:"salinity", label:"Salinity", unit:"ppt", min:0, max:40, decimals:2, suffix:"salinity",
+      zones:[{from:0,to:0.5,level:"good"},{from:0.5,to:5,level:"warning"},{from:5,to:40,level:"danger"}],
+      demoBase:0.3, demoJitter:0.15 },
+    { id:"do", label:"Dissolved O₂", unit:"mg/L", min:0, max:20, decimals:2, suffix:"do",
+      zones:[{from:0,to:3,level:"danger"},{from:3,to:5,level:"warning"},{from:5,to:20,level:"good"}],
+      demoBase:6.5, demoJitter:0.8 },
+    { id:"temp", label:"Temperature", unit:"°C", min:0, max:50, decimals:1, suffix:"temp",
+      zones:[{from:0,to:20,level:"warning"},{from:20,to:30,level:"good"},{from:30,to:50,level:"danger"}],
+      demoBase:28, demoJitter:1.2 }
+  ];
+  var HISTORY_LEN = 30;
+  var STALE_MS = 15000;
+
+  var state = {};
+  SENSORS.forEach(function(s){
+    state[s.id] = { value:null, history:[], lastUpdate:null, demoCurrent:s.demoBase };
+  });
+
+  var mqttClient = null;
+  var demoTimer = null;
+  var staleTimer = null;
+  var freshnessTimer = null;
+  var marker = null;
+  var map = null;
+
+  /* ============ Util ============ */
+  function $(id){ return document.getElementById(id); }
+  function clamp(v,lo,hi){ return Math.max(lo, Math.min(hi, v)); }
+  function fmt(s, raw){
+    if(raw===null || raw===undefined || isNaN(raw)) return "—";
+    return Number(raw).toFixed(s.decimals);
+  }
+  function valueToAngle(s, v){
+    var t = clamp((v - s.min) / (s.max - s.min), 0, 1);
+    return 180 + t * 180; // 180=kiri/min, 270=atas/tengah, 360=kanan/max
+  }
+  function polarToCartesian(cx, cy, r, angleDeg){
+    var a = angleDeg * Math.PI / 180.0;
+    return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+  }
+  function describeArc(cx, cy, r, startAngle, endAngle){
+    var start = polarToCartesian(cx, cy, r, startAngle);
+    var end = polarToCartesian(cx, cy, r, endAngle);
+    var largeArcFlag = (endAngle - startAngle) > 180 ? "1" : "0";
+    return ["M", start.x, start.y, "A", r, r, 0, largeArcFlag, 1, end.x, end.y].join(" ");
+  }
+  function levelColor(level){
+    if(level==="good") return "var(--tide)";
+    if(level==="warning") return "var(--amber)";
+    if(level==="danger") return "var(--coral)";
+    return "var(--foam-dim)";
+  }
+  function levelOf(s, v){
+    if(v===null || v===undefined || isNaN(v)) return null;
+    for(var i=0;i<s.zones.length;i++){
+      var z = s.zones[i];
+      if(v>=z.from && v<=z.to) return z.level;
+    }
+    return null;
+  }
+  function log(msg){
+    var box = $("logBox");
+    var line = document.createElement("div");
+    var t = new Date().toLocaleTimeString();
+    line.textContent = "[" + t + "] " + msg;
+    box.appendChild(line);
+    box.scrollTop = box.scrollHeight;
+    while(box.children.length > 80){ box.removeChild(box.firstChild); }
+  }
+
+  /* ============ Bangun kartu gauge ============ */
+  var CX = 100, CY = 96, R = 78, STROKE = 13, NEEDLE_LEN = 64;
+
+  function buildGaugeSVG(s){
+    var zonePaths = s.zones.map(function(z){
+      var a1 = valueToAngle(s, z.from);
+      var a2 = valueToAngle(s, z.to);
+      return '<path d="' + describeArc(CX, CY, R, a1, a2) + '" stroke="' + levelColor(z.level) +
+             '" stroke-width="' + STROKE + '" fill="none" stroke-linecap="butt" opacity="0.9"></path>';
+    }).join("");
+
+    return (
+      '<svg viewBox="0 0 200 112" class="gauge-svg" data-id="' + s.id + '">' +
+        '<path d="' + describeArc(CX, CY, R, 180, 360) + '" stroke="rgba(255,255,255,.07)" stroke-width="' + STROKE + '" fill="none"></path>' +
+        zonePaths +
+        '<line class="needle" x1="' + CX + '" y1="' + CY + '" x2="' + CX + '" y2="' + (CY-NEEDLE_LEN) + '" stroke="#eef6f6" stroke-width="4" stroke-linecap="round"></line>' +
+        '<circle cx="' + CX + '" cy="' + CY + '" r="6.5" fill="#eef6f6"></circle>' +
+        '<circle cx="' + CX + '" cy="' + CY + '" r="3" fill="' + 'var(--current)' + '"></circle>' +
+      '</svg>'
+    );
+  }
+
+  function buildCard(s){
+    var card = document.createElement("article");
+    card.className = "card";
+    card.id = "card-" + s.id;
+    card.setAttribute("data-level","");
+    card.innerHTML =
+      '<div class="card-head"><h3>' + s.label + '</h3><span class="level-tag" id="tag-' + s.id + '">—</span></div>' +
+      '<div class="gauge-wrap">' + buildGaugeSVG(s) + '</div>' +
+      '<div class="value-row"><span class="num" id="num-' + s.id + '">—</span><span class="unit">' + s.unit + '</span></div>' +
+      '<svg class="sparkline" id="spark-' + s.id + '" viewBox="0 0 120 28" preserveAspectRatio="none"><polyline points=""></polyline></svg>' +
+      '<div class="updated" id="upd-' + s.id + '">belum ada data</div>';
+    return card;
+  }
+
+  var grid = $("sensorGrid");
+  SENSORS.forEach(function(s){ grid.appendChild(buildCard(s)); });
+
+  /* ============ Update tampilan satu sensor ============ */
+  function renderSensor(s){
+    var st = state[s.id];
+    var v = st.value;
+    var card = $("card-" + s.id);
+    var needle = card.querySelector(".needle");
+    var angle = valueToAngle(s, v===null ? s.min : v);
+    var tip = polarToCartesian(CX, CY, NEEDLE_LEN, angle);
+    needle.setAttribute("x2", tip.x.toFixed(2));
+    needle.setAttribute("y2", tip.y.toFixed(2));
+
+    $("num-" + s.id).textContent = fmt(s, v);
+
+    var lvl = levelOf(s, v);
+    card.setAttribute("data-level", lvl || "");
+    var tag = $("tag-" + s.id);
+    tag.textContent = lvl ? (lvl==="good"?"Normal":lvl==="warning"?"Waspada":"Bahaya") : "—";
+
+    // sparkline
+    var poly = document.querySelector("#spark-" + s.id + " polyline");
+    var hist = st.history;
+    if(hist.length>1){
+      var vmin = Math.min.apply(null,hist), vmax = Math.max.apply(null,hist);
+      var range = (vmax-vmin) || 1;
+      var pts = hist.map(function(h,i){
+        var x = (i/(HISTORY_LEN-1))*120;
+        var y = 26 - ((h-vmin)/range)*22 - 2;
+        return x.toFixed(1)+","+y.toFixed(1);
+      }).join(" ");
+      poly.setAttribute("points", pts);
+      poly.setAttribute("stroke", levelColor(lvl));
+    } else {
+      poly.setAttribute("points","");
+    }
+  }
+
+  function updateSensorValue(id, raw){
+    var s = SENSORS.find(function(x){ return x.id===id; });
+    if(!s) return;
+    var v = parseFloat(raw);
+    if(isNaN(v)) return;
+    var st = state[id];
+    st.value = v;
+    st.history.push(v);
+    if(st.history.length > HISTORY_LEN) st.history.shift();
+    st.lastUpdate = Date.now();
+    renderSensor(s);
+  }
+
+  function refreshTimestamps(){
+    SENSORS.forEach(function(s){
+      var st = state[s.id];
+      var el = $("upd-" + s.id);
+      var card = $("card-" + s.id);
+      if(st.lastUpdate===null){ el.textContent="belum ada data"; return; }
+      var secs = Math.round((Date.now()-st.lastUpdate)/1000);
+      el.textContent = secs<1 ? "baru saja" : "diperbarui " + secs + " dtk lalu";
+      if(secs*1000 > STALE_MS && !state.demoActive){ card.classList.add("stale"); }
+      else { card.classList.remove("stale"); }
+    });
+  }
+  freshnessTimer = setInterval(refreshTimestamps, 1000);
+
+  /* ============ Peta Leaflet ============ */
+  function initMap(){
+    var lat = parseFloat($("fLat").value) || -7.2575;
+    var lng = parseFloat($("fLng").value) || 112.7521;
+    map = L.map("map", { zoomControl:true, attributionControl:true }).setView([lat,lng], 13);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom:19, attribution:'&copy; OpenStreetMap'
+    }).addTo(map);
+
+    var icon = L.divIcon({
+      className: "",
+      html: '<div style="width:18px;height:18px;border-radius:50%;background:#2dd4bf;box-shadow:0 0 0 6px rgba(45,212,191,.25),0 0 14px rgba(45,212,191,.7);border:2px solid #eef6f6;"></div>',
+      iconSize:[18,18], iconAnchor:[9,9]
+    });
+    marker = L.marker([lat,lng], {icon:icon, draggable:true}).addTo(map);
+    marker.bindPopup(popupContent());
+    marker.on("dragend", function(){
+      var p = marker.getLatLng();
+      updateMapMeta(p.lat, p.lng, "diatur manual");
+    });
+    updateMapMeta(lat, lng, "default");
+  }
+
+  function popupContent(){
+    var rows = SENSORS.map(function(s){
+      var st = state[s.id];
+      return "<div style='font-family:JetBrains Mono,monospace;font-size:11px;display:flex;justify-content:space-between;gap:10px;min-width:150px;'>" +
+        "<span>"+s.label+"</span><span><b>"+fmt(s, st.value)+"</b> "+s.unit+"</span></div>";
+    }).join("");
+    return "<div style='font-family:Inter,sans-serif;'><b style='font-family:Space Grotesk,sans-serif;'>Node Sensor</b><hr style='border-color:#eee;margin:6px 0;'>" + rows + "</div>";
+  }
+
+  function updateMapMeta(lat, lng, source){
+    $("mapCoords").textContent = "Lat " + lat.toFixed(5) + ", Lng " + lng.toFixed(5);
+    $("mapSource").textContent = "sumber: " + source;
+  }
+
+  function updateLocation(lat, lng, source){
+    if(!map || isNaN(lat) || isNaN(lng)) return;
+    marker.setLatLng([lat,lng]);
+    map.panTo([lat,lng]);
+    updateMapMeta(lat, lng, source || "MQTT");
+  }
+
+  function refreshPopup(){
+    if(marker) marker.setPopupContent(popupContent());
+  }
+
+  /* ============ Mode simulasi ============ */
+  function startDemo(){
+    stopDemo();
+    state.demoActive = true;
+    setStatus("demo", "Mode Simulasi");
+    demoTimer = setInterval(function(){
+      SENSORS.forEach(function(s){
+        var st = state[s.id];
+        var next = st.demoCurrent + (Math.random()-0.5)*s.demoJitter;
+        next = clamp(next, s.min, s.max);
+        st.demoCurrent = next;
+        updateSensorValue(s.id, next);
+      });
+      refreshPopup();
+    }, 2000);
+    // isi nilai awal langsung biar tidak kosong
+    SENSORS.forEach(function(s){ updateSensorValue(s.id, s.demoBase); });
+    refreshPopup();
+  }
+  function stopDemo(){
+    state.demoActive = false;
+    if(demoTimer){ clearInterval(demoTimer); demoTimer=null; }
+  }
+
+  /* ============ Status pill ============ */
+  function setStatus(stateKey, text){
+    var pill = $("statusPill");
+    pill.setAttribute("data-state", stateKey);
+    $("statusText").textContent = text;
+  }
+
+  /* ============ Form: mode payload toggle ============ */
+  function renderTopicRef(){
+    var prefix = $("fPrefix").value.replace(/\/$/,"");
+    var mode = $("fMode").value;
+    var refEl = $("singleTopicRef");
+    if(mode==="single"){
+      refEl.style.display = "block";
+      $("jsonTopicField").style.display = "none";
+      refEl.innerHTML = SENSORS.map(function(s){
+        return '<div class="topic-ref">' + prefix + '/' + s.suffix + '</div>';
+      }).join("");
+    } else {
+      refEl.style.display = "none";
+      $("jsonTopicField").style.display = "block";
+    }
+    $("fLocTopic").value = prefix + "/location";
+    if(mode==="json"){ $("fJsonTopic").value = prefix + "/all"; }
+  }
+  $("fPrefix").addEventListener("input", renderTopicRef);
+  $("fMode").addEventListener("change", renderTopicRef);
+  renderTopicRef();
+
+  /* ============ MQTT ============ */
+  function buildUrl(){
+    var tls = $("fTLS").checked;
+    var host = $("fHost").value.trim();
+    var port = $("fPort").value.trim();
+    var path = $("fPath").value.trim() || "/mqtt";
+    return (tls?"wss":"ws") + "://" + host + ":" + port + path;
+  }
+
+  function connectBroker(){
+    if(mqttClient){ try{ mqttClient.end(true); }catch(e){} mqttClient=null; }
+    stopDemo();
+    setStatus("connecting", "Menyambungkan…");
+    log("Menyambungkan ke " + buildUrl());
+
+    var opts = {
+      clientId: $("fClientId").value || ("aquascope-" + Math.random().toString(16).slice(2,10)),
+      reconnectPeriod: 4000,
+      connectTimeout: 8000,
+      clean: true
+    };
+    var user = $("fUser").value.trim();
+    var pass = $("fPass").value;
+    if(user){ opts.username = user; }
+    if(pass){ opts.password = pass; }
+
+    var url = buildUrl();
+    try{
+      mqttClient = mqtt.connect(url, opts);
+    } catch(e){
+      log("Gagal membuat koneksi: " + e.message);
+      setStatus("offline","Gagal tersambung");
+      startDemo();
+      return;
+    }
+
+    mqttClient.on("connect", function(){
+      setStatus("live","Tersambung — Live");
+      log("Tersambung ke broker.");
+      $("btnConnect").textContent = "Sambungkan Ulang";
+      $("btnDisconnect").disabled = false;
+      subscribeTopics();
+    });
+    mqttClient.on("reconnect", function(){
+      setStatus("connecting","Menyambungkan ulang…");
+    });
+    mqttClient.on("close", function(){
+      setStatus("offline","Terputus");
+    });
+    mqttClient.on("offline", function(){
+      setStatus("offline","Offline");
+    });
+    mqttClient.on("error", function(err){
+      log("Error: " + (err && err.message ? err.message : err));
+      setStatus("offline","Error koneksi");
+    });
+    mqttClient.on("message", handleMessage);
+  }
+
+  function subscribeTopics(){
+    var prefix = $("fPrefix").value.replace(/\/$/,"");
+    var mode = $("fMode").value;
+    if(mode==="json"){
+      var topic = $("fJsonTopic").value;
+      mqttClient.subscribe(topic, function(){ log("Subscribe: " + topic); });
+    } else {
+      SENSORS.forEach(function(s){
+        var t = prefix + "/" + s.suffix;
+        mqttClient.subscribe(t, function(){ log("Subscribe: " + t); });
+      });
+    }
+    var locTopic = $("fLocTopic").value;
+    mqttClient.subscribe(locTopic, function(){ log("Subscribe: " + locTopic); });
+  }
+
+  function tryParseLocation(payloadStr){
+    payloadStr = payloadStr.trim();
+    if(payloadStr.indexOf("{")===0){
+      try{
+        var obj = JSON.parse(payloadStr);
+        if(!isNaN(parseFloat(obj.lat)) && !isNaN(parseFloat(obj.lng))){
+          return { lat:parseFloat(obj.lat), lng:parseFloat(obj.lng) };
+        }
+      } catch(e){}
+      return null;
+    }
+    var parts = payloadStr.split(",");
+    if(parts.length===2){
+      var lat = parseFloat(parts[0]), lng = parseFloat(parts[1]);
+      if(!isNaN(lat) && !isNaN(lng)) return {lat:lat,lng:lng};
+    }
+    return null;
+  }
+
+  function handleMessage(topic, payload){
+    var str = payload.toString();
+    var mode = $("fMode").value;
+    var prefix = $("fPrefix").value.replace(/\/$/,"");
+    var locTopic = $("fLocTopic").value;
+
+    if(topic === locTopic){
+      var loc = tryParseLocation(str);
+      if(loc){ updateLocation(loc.lat, loc.lng, "MQTT"); log("Lokasi diperbarui: " + loc.lat + "," + loc.lng); }
+      return;
+    }
+
+    if(mode==="json" && topic === $("fJsonTopic").value){
+      try{
+        var obj = JSON.parse(str);
+        SENSORS.forEach(function(s){
+          if(obj[s.id] !== undefined){ updateSensorValue(s.id, obj[s.id]); }
+        });
+        if(obj.lat!==undefined && obj.lng!==undefined){ updateLocation(parseFloat(obj.lat), parseFloat(obj.lng), "MQTT"); }
+        refreshPopup();
+        log("Pesan JSON diterima di " + topic);
+      } catch(e){
+        log("Gagal parse JSON dari " + topic);
+      }
+      return;
+    }
+
+    var match = SENSORS.find(function(s){ return topic === prefix + "/" + s.suffix; });
+    if(match){
+      updateSensorValue(match.id, str);
+      refreshPopup();
+      log(match.label + " ← " + str);
+    }
+  }
+
+  function disconnectBroker(){
+    if(mqttClient){ mqttClient.end(true); mqttClient=null; }
+    setStatus("offline","Terputus");
+    log("Terputus dari broker (manual).");
+    $("btnDisconnect").disabled = true;
+    $("btnConnect").textContent = "Sambungkan";
+    if($("fDemo").checked){ startDemo(); }
+  }
+
+  /* ============ Wiring tombol & drawer ============ */
+  $("openSettings").addEventListener("click", function(){
+    $("drawer").classList.add("open");
+    $("scrim").classList.add("open");
+  });
+  function closeDrawer(){
+    $("drawer").classList.remove("open");
+    $("scrim").classList.remove("open");
+  }
+  $("closeSettings").addEventListener("click", closeDrawer);
+  $("scrim").addEventListener("click", closeDrawer);
+
+  $("btnConnect").addEventListener("click", connectBroker);
+  $("btnDisconnect").addEventListener("click", disconnectBroker);
+  $("fDemo").addEventListener("change", function(){
+    if(this.checked && !mqttClient){ startDemo(); }
+    if(!this.checked){ stopDemo(); setStatus("offline","Simulasi nonaktif"); }
+  });
+  $("fLat").addEventListener("change", function(){
+    updateLocation(parseFloat($("fLat").value), parseFloat($("fLng").value), "manual");
+  });
+  $("fLng").addEventListener("change", function(){
+    updateLocation(parseFloat($("fLat").value), parseFloat($("fLng").value), "manual");
+  });
+
+  /* ============ Init ============ */
+  $("fClientId").value = "aquascope-" + Math.random().toString(16).slice(2,10);
+  initMap();
+  SENSORS.forEach(function(s){ renderSensor(s); });
+  startDemo();
+  log("Dasbor siap. Mode simulasi berjalan — buka Pengaturan Broker untuk tersambung ke HiveMQ.");
+
+})();
+</script>
+</body>
+</html>
