@@ -453,7 +453,7 @@ var MQTT_CONFIG = {
   password: "airatorPPNS1",                     // kosongkan jika tidak pakai auth
   clientId: "aquascope-" + Math.random().toString(16).slice(2,10),
   prefix:   "aquascope/sensors",    // prefix topik sensor
-  mode:     "single",               // "single" atau "json"
+  mode:     "json",               // "single" atau "json"
   jsonTopic:"aquascope/sensors/all",// hanya untuk mode json
   locTopic: "aquascope/sensors/location",
   // Topik VFD (ESP32)
