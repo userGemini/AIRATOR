@@ -793,6 +793,8 @@ function subscribeTopics(){
 
 function handleMessage(topic,payload){
   var str=payload.toString();
+  console.log("[MQTT] topic:", topic, "| payload:", str);  // ← tambah ini
+  
   var p=MQTT_CONFIG.prefix.replace(/\/$/,"");
 
   if(topic===MQTT_CONFIG.locTopic){
@@ -838,15 +840,13 @@ initMap();
 SENSORS.forEach(function(s){ renderSensor(s); });
 
 // Coba sambung broker; fallback ke demo jika gagal
-if(MQTT_CONFIG.username || MQTT_CONFIG.host !== "broker.hivemq.com"){
-  connectBroker();
-} else {
-  // Public broker — langsung coba sambung, fallback demo setelah 5 detik
-  connectBroker();
-  setTimeout(function(){
-    if(!mqttClient||!mqttClient.connected){ startDemo(); }
-  },5000);
-}
+connectBroker();
+setTimeout(function(){
+  if(!mqttClient || !mqttClient.connected){
+    console.warn("MQTT gagal, fallback ke demo");
+    startDemo();
+  }
+}, 6000);
 
 })();
 </script>
