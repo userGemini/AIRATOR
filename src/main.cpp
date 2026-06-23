@@ -3,20 +3,15 @@
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
-#include <OneWire.h>
-#include <DallasTemperature.h>
-#include <DFRobot_ESP_EC.h>
-#include <GravityTDS.h>
+//#include <OneWire.h>
+//#include <DallasTemperature.h>
+//#include <DFRobot_ESP_EC.h>
+//#include <GravityTDS.h>
 #include <SoftwareSerial.h>
 
-#include <WiFi.h>
-#include <WiFiClientSecure.h>
-#include <PubSubClient.h>
-#include <ArduinoJson.h>
-
 /* ====================== KONFIGURASI WIFI ====================== */
-const char* WIFI_SSID     = "ANGKARA";
-const char* WIFI_PASSWORD = "HARAPTENANGDIJAMMALAM";
+const char* WIFI_SSID     = "Lab Robotika AI";
+const char* WIFI_PASSWORD = "labrobotm101";
 
 /* ================= KONFIGURASI BROKER HIVEMQ =================
    Sama dengan konfigurasi di dashboard (file HTML), tapi ESP32
@@ -50,9 +45,56 @@ const unsigned long POWER_INTERVAL_MS  = 2000;   // kirim data daya tiap 2 detik
 unsigned long lastSensorSend = 0;
 unsigned long lastPowerSend  = 0;
 
-/* ==================== STATE VFD (dummy) ==================== */
+/* ==================== STATE VFD ==================== */
 bool   vfdRunning = false;
-float  vfdFreq    = 30.0;
+float  vfdFreq    = 30.0;   // Hz, dikontrol dari website (0-50 Hz)
+
+/* ============================================================
+   ===================  PWM → 0-10V  KE VFD  ===================
+   Mengubah frekuensi (0-50 Hz, dikirim dari website lewat MQTT)
+   menjadi tegangan analog 0-10V via modul PWM-to-Voltage, yang
+   kemudian masuk ke input kontrol analog VFD fisik.
+   ============================================================ */
+const int   PWM_PIN        = 25;        // Pin PWM ESP32 (bisa diganti: 25, 26, 27, 32, 33)
+const int   PWM_FREQ_HZ    = 1000;      // Frekuensi PWM 1 kHz, aman untuk modul PWM-to-voltage
+const int   PWM_RESOLUTION = 12;        // Resolusi 12-bit: 0 - 4095
+const int   PWM_CHANNEL    = 0;         // Kanal PWM ESP32
+const int   MAX_DUTY       = (1 << PWM_RESOLUTION) - 1;
+
+const float VFD_FREQ_MAX   = 50.0;      // Hz maksimum dari slider website (samakan dgn HTML)
+const float VFD_VOLT_MAX   = 10.0;      // Tegangan maksimum modul PWM-to-Voltage
+
+float currentOutputVoltage = 0.0;
+
+// Set tegangan output 0-10V via PWM (dipanggil internal)
+void setOutputVoltage(float voltage) {
+  if (voltage < 0.0) voltage = 0.0;
+  if (voltage > VFD_VOLT_MAX) voltage = VFD_VOLT_MAX;
+  currentOutputVoltage = voltage;
+
+  float dutyRatio = voltage / VFD_VOLT_MAX;
+  int dutyValue = round(dutyRatio * MAX_DUTY);
+  ledcWrite(PWM_CHANNEL, dutyValue);
+
+  Serial.print("[VFD] Tegangan output: ");
+  Serial.print(voltage, 2);
+  Serial.print(" V | Duty: ");
+  Serial.print(dutyRatio * 100.0, 1);
+  Serial.print(" % (");
+  Serial.print(dutyValue);
+  Serial.println(")");
+}
+
+// Konversi frekuensi (Hz, 0-50) -> tegangan (0-10V) lalu kirim ke PWM.
+// Kalau motor sedang STOP, tegangan dipaksa 0V apa pun frekuensinya.
+void applyFrequencyToOutput() {
+  if (!vfdRunning) {
+    setOutputVoltage(0.0);
+    return;
+  }
+  float voltage = (vfdFreq / VFD_FREQ_MAX) * VFD_VOLT_MAX;
+  setOutputVoltage(voltage);
+}
 
 /* ==================== STATE SIMULASI SENSOR ====================
    Pakai "random walk": nilai berjalan pelan-pelan di sekitar
@@ -116,9 +158,11 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     if (msg == "START") {
       vfdRunning = true;
       mqtt.publish(TOPIC_VFD_STATUS, "RUNNING");
+      applyFrequencyToOutput();          // langsung keluarkan tegangan sesuai freq terakhir
     } else if (msg == "STOP") {
       vfdRunning = false;
       mqtt.publish(TOPIC_VFD_STATUS, "STOPPED");
+      applyFrequencyToOutput();          // akan dipaksa ke 0V
     }
   }
   else if (strcmp(topic, TOPIC_VFD_FREQ) == 0) {
@@ -127,7 +171,7 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       vfdFreq = f;
       Serial.print("Frekuensi VFD diset ke: ");
       Serial.println(vfdFreq);
-      // Di sini bisa ditambahkan kode untuk mengatur VFD asli (misal via Modbus/relay/PWM)
+      applyFrequencyToOutput();          // update tegangan 0-10V sesuai frekuensi baru
     }
   }
 }
@@ -152,6 +196,7 @@ void connectMQTT() {
       // Kirim status & lokasi awal
       mqtt.publish(TOPIC_VFD_STATUS, vfdRunning ? "RUNNING" : "STOPPED");
       publishLocation();
+      applyFrequencyToOutput();   // sinkronkan output PWM dgn state terakhir
     } else {
       Serial.print(" gagal, rc=");
       Serial.print(mqtt.state());
@@ -201,6 +246,11 @@ void publishPower() {
 void setup() {
   Serial.begin(115200);
   randomSeed(esp_random());      // seed acak yang baik di ESP32
+
+  // Setup PWM untuk modul PWM-to-0-10V (kontrol VFD)
+  ledcSetup(PWM_CHANNEL, PWM_FREQ_HZ, PWM_RESOLUTION);
+  ledcAttachPin(PWM_PIN, PWM_CHANNEL);
+  setOutputVoltage(0.0);          // pastikan motor diam saat boot
 
   connectWiFi();
 
