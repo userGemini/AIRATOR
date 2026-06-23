@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="id">
 <head>
@@ -657,8 +656,9 @@ function initMap(){
   updateMapMeta(lat,lng,"default");
 }
 function updateMapMeta(lat,lng,src){
-  $("mapCoords").textContent="Lat "+lat.toFixed(5)+", Lng "+lng.toFixed(5);
-  $("mapSource").textContent="sumber: "+src;
+  var elCoords=$("mapCoords"), elSource=$("mapSource");
+  if(elCoords) elCoords.textContent="Lat "+lat.toFixed(5)+", Lng "+lng.toFixed(5);
+  if(elSource) elSource.textContent="sumber: "+src;
 }
 function updateLocation(lat,lng,src){
   if(!map||isNaN(lat)||isNaN(lng)) return;
