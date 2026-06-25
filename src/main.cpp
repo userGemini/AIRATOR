@@ -105,7 +105,7 @@ unsigned long lastPowerSend  = 0;
 //  STATE VFD
 // ============================================================
 bool  vfdRunning = false;
-float vfdFreq    = 30.0; // Input keypad (0-50 Hz)
+float vfdFreq    = 30.0; // Sekarang bersifat READ-ONLY dari MQTT/Internal ESP
 
 // ============================================================
 //  PWM → Konversi 0-50Hz menjadi Voltase 0-10V
@@ -134,7 +134,6 @@ void applyFrequencyToOutput() {
     setOutputVoltage(0.0); 
     return; 
   }
-  // Rumus: (Frekuensi_Input / 50Hz) * 10V = Output Voltase fisik Pin 25
   float targetVolt = (vfdFreq / VFD_FREQ_MAX) * VFD_VOLT_MAX;
   setOutputVoltage(targetVolt);
 }
@@ -173,6 +172,11 @@ void connectWiFi() {
   Serial.println(WIFI_SSID);
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  
+  // Update status di Nextion saat mencoba menyambungkan
+  sendNextionText("tWifi", "Connecting...");
+  sendNextionColor("tWifi", COLOR_YELLOW);
+  
   while (WiFi.status() != WL_CONNECTED) {
     delay(400);
     Serial.print(".");
@@ -180,6 +184,9 @@ void connectWiFi() {
   Serial.println();
   Serial.print("WiFi tersambung, IP: ");
   Serial.println(WiFi.localIP());
+  
+  sendNextionText("tWifi", "Connected");
+  sendNextionColor("tWifi", COLOR_GREEN);
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
@@ -199,11 +206,12 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
       applyFrequencyToOutput();
     }
   }
+  // Pembacaan Frekuensi Terkini via MQTT (Read-Only di Nextion)
   else if (strcmp(topic, TOPIC_VFD_FREQ) == 0) {
     float f = msg.toFloat();
     if (f >= 0 && f <= VFD_FREQ_MAX) {
       vfdFreq = f;
-      Serial.printf("Frekuensi VFD via MQTT: %.1f Hz\n", vfdFreq);
+      Serial.printf("Frekuensi VFD diperbarui dari MQTT: %.1f Hz\n", vfdFreq);
       applyFrequencyToOutput();
     }
   }
@@ -221,8 +229,14 @@ void publishLocation() {
 void connectMQTT() {
   while (!mqtt.connected()) {
     Serial.print("Menyambungkan ke broker HiveMQ...");
+    sendNextionText("tBroker", "Connecting...");
+    sendNextionColor("tBroker", COLOR_YELLOW);
+    
     if (mqtt.connect(MQTT_CLIENT_ID, MQTT_USER, MQTT_PASS)) {
       Serial.println(" tersambung!");
+      sendNextionText("tBroker", "Connected");
+      sendNextionColor("tBroker", COLOR_GREEN);
+      
       mqtt.subscribe(TOPIC_VFD_CMD);
       mqtt.subscribe(TOPIC_VFD_FREQ);
       mqtt.publish(TOPIC_VFD_STATUS, vfdRunning ? "RUNNING" : "STOPPED");
@@ -230,6 +244,8 @@ void connectMQTT() {
       applyFrequencyToOutput();
     } else {
       Serial.printf(" gagal rc=%d, coba lagi 3 detik...\n", mqtt.state());
+      sendNextionText("tBroker", "Disconnected");
+      sendNextionColor("tBroker", COLOR_RED);
       delay(3000);
     }
   }
@@ -238,7 +254,7 @@ void connectMQTT() {
 void publishSensors() {
   JsonDocument doc;
   doc["ph"]        = round(randomWalk(ph)        * 100) / 100.0;
-  doc["turbidity"] = round(randomWalk(turbidity)  * 10)  / 10.0;
+  doc["turbidity"] = round(randomWalk(turbidity) * 10)  / 10.0;
   doc["tds"]       = round(randomWalk(tds));
   doc["salinity"]  = round(randomWalk(salinity)   * 100) / 100.0;
   doc["do"]        = round(randomWalk(doxy)        * 100) / 100.0;
@@ -246,7 +262,6 @@ void publishSensors() {
   char buf[256];
   size_t n = serializeJson(doc, buf);
   mqtt.publish(TOPIC_SENSORS_JSON, buf, n);
-  Serial.printf("[MQTT OUT] %s -> %s\n", TOPIC_SENSORS_JSON, buf);
 }
 
 void publishPower() {
@@ -259,11 +274,10 @@ void publishPower() {
   mqtt.publish(TOPIC_VOLT, bufV);
   mqtt.publish(TOPIC_AMP,  bufA);
   mqtt.publish(TOPIC_WATT, bufW);
-  Serial.printf("[MQTT OUT] V=%s A=%s W=%s\n", bufV, bufA, bufW);
 }
 
 // ============================================================
-//  UPDATE NEXTION — Versi Full TEXT & Gauge Responsif
+//  UPDATE NEXTION 
 // ============================================================
 void updateNextionDisplay() {
   if (!nextionAvailable) return;
@@ -276,7 +290,7 @@ void updateNextionDisplay() {
   sendNextionGauge("jTurbidity", (int)map((long) turbidity.value,      0, 25,   0, 180));
   sendNextionGauge("jSalinity",  (int)map((long)(salinity.value * 10), 0, 50,   0, 180));
 
-  // --- Tampilan Angka Sensor ke Komponen Tipe TEXT ---
+  // --- Tampilan Angka Sensor ---
   sendNextionText("tpHValue",   String(ph.value, 1));        
   sendNextionText("tDOValue",   String(doxy.value, 1));      
   sendNextionText("tTempValue", String(temp.value, 1));      
@@ -284,7 +298,7 @@ void updateNextionDisplay() {
   sendNextionText("tTurbValue", String(turbidity.value, 0));  
   sendNextionText("tSalValue",  String(salinity.value, 1));   
 
-  // --- Penayangan Frekuensi Aktif & Status VFD ---
+  // --- Penayangan Frekuensi Aktif (Sekarang Menampilkan Data Terupdate dari ESP/MQTT) ---
   sendNextionText("tVFDFreq",   String(vfdFreq, 1) + " Hz");
   sendNextionText("tVFDStatus", vfdRunning ? "RUNNING" : "STOPPED");
   sendNextionColor("tVFDStatus", vfdRunning ? COLOR_GREEN : COLOR_RED);
@@ -293,17 +307,34 @@ void updateNextionDisplay() {
   sendNextionText("tVolt", String(voltSim.value, 1) + " V");
   sendNextionText("tAmp",  String(ampSim.value,  2) + " A");
   sendNextionText("tWatt", String(voltSim.value * ampSim.value, 0) + " W");
+  
+  // --- Update berkala real-time Status Koneksi ---
+  if(WiFi.status() == WL_CONNECTED) {
+    sendNextionText("tWifi", "Connected");
+    sendNextionColor("tWifi", COLOR_GREEN);
+  } else {
+    sendNextionText("tWifi", "Disconnected");
+    sendNextionColor("tWifi", COLOR_RED);
+  }
+
+  if(mqtt.connected()) {
+    sendNextionText("tBroker", "Connected");
+    sendNextionColor("tBroker", COLOR_GREEN);
+  } else {
+    sendNextionText("tBroker", "Disconnected");
+    sendNextionColor("tBroker", COLOR_RED);
+  }
 }
 
 // ============================================================
-//  FUNGSI MEMBACA INPUT KEYPAD DARI NEXTION (SERIAL2)
+//  FUNGSI MEMBACA TOMBOL START/STOP SAJA DARI NEXTION
 // ============================================================
 void checkNextionInput() {
   if (Serial2.available() > 0) {
     String inputData = Serial2.readStringUntil('\n'); 
     inputData.trim(); 
 
-    // 1. Membaca Perintah START / STOP dari Tombol Nextion
+    // Membaca Perintah START / STOP dari Tombol Nextion
     if (inputData.startsWith("cmd:")) {
       String cmd = inputData.substring(4);
       if (cmd == "START") {
@@ -313,43 +344,17 @@ void checkNextionInput() {
         vfdRunning = false;
         Serial.println("[Nextion IN] Tombol STOP Ditekan");
       }
-      applyFrequencyToOutput(); // Terapkan perubahan voltase instan
-    }
-    
-    // 2. Membaca Perintah Angka Frekuensi dari Keypad Nextion
-    else if (inputData.startsWith("hz:")) {
-      String valueStr = inputData.substring(3); 
-      float rawValue = valueStr.toFloat(); 
+      applyFrequencyToOutput();
       
-      // KUNCI PERBAIKAN: Jika nilai dari Nextion > 50, berarti itu nilai mentah x10 (misal 450 -> 45.0)
-      float newFreq = rawValue;
-      if (rawValue > VFD_FREQ_MAX) {
-        newFreq = rawValue / 10.0; 
-      }
-      
-      // Validasi rentang aman frekuensi (0 s.d 50 Hz)
-      if (newFreq >= 0.0 && newFreq <= VFD_FREQ_MAX) {
-        vfdFreq = newFreq; 
-        Serial.printf("[Nextion IN] Frekuensi Valid Diterima: %.1f Hz\n", vfdFreq);
-        
-        // Otomatis running jika user memasukkan frekuensi di atas 0 Hz via Nextion
-        if (vfdFreq > 0.0) vfdRunning = true; 
-        
-        applyFrequencyToOutput(); // Langsung hitung PWM & keluarkan tegangan fisik!
-        
-        // Sinkronisasi data baru ke MQTT agar dashboard web juga terupdate
-        if (mqtt.connected()) {
-          char freqBuf[16];
-          dtostrf(vfdFreq, 0, 1, freqBuf);
-          mqtt.publish(TOPIC_VFD_FREQ, freqBuf);
-          mqtt.publish(TOPIC_VFD_STATUS, vfdRunning ? "RUNNING" : "STOPPED");
-        }
-      } else {
-        Serial.printf("[Nextion IN] Error: Nilai %.1f Hz di luar batas aman (0-50Hz)!\n", newFreq);
+      // Sinkronisasi balik ke Broker MQTT setelah tombol ditekan fisik
+      if (mqtt.connected()) {
+        mqtt.publish(TOPIC_VFD_STATUS, vfdRunning ? "RUNNING" : "STOPPED");
       }
     }
+    // Bagian pembbacaan "hz:" dihapus agar Nextion tidak bisa mengubah nilai hz secara lokal via keypad.
   }
 }
+
 // ============================================================
 //  SETUP
 // ============================================================
@@ -378,7 +383,6 @@ void loop() {
   if (!mqtt.connected())             connectMQTT();
   mqtt.loop();
 
-  // Membaca ketikan keypad Nextion setiap siklus loop
   checkNextionInput(); 
 
   unsigned long now = millis();
