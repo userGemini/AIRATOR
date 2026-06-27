@@ -8,6 +8,7 @@
 #include "DFRobot_ESP_EC.h"
 #include "GravityTDS.h"
 #include <SoftwareSerial.h>
+#include <TinyGPS++.h>
 
 // ============================================================
 //  NEXTION — Pure raw Serial2, NO library
@@ -88,18 +89,33 @@ const char* TOPIC_VFD_FREQ     = "aquascope/vfd/freq";
 const char* TOPIC_VFD_CMD      = "aquascope/vfd/cmd";
 const char* TOPIC_VFD_STATUS   = "aquascope/vfd/status";
 
-// Lokasi node
-const double NODE_LAT =  -7.283749;
-const double NODE_LNG = 112.805076;
+// ============================================================
+//  KONFIGURASI MODUL GPS NEO-6M
+// ============================================================
+// CATATAN: GPIO12 adalah strapping pin (MTDI) yang menentukan tegangan
+// flash ESP32 saat boot. Kalau board kamu pernah gagal boot/boot-loop
+// sejak GPS dipasang, coba pindahkan GPS_TX_PIN ke pin lain (misal 4).
+#define GPS_RX_PIN 13 // Terhubung ke TX Modul GPS
+#define GPS_TX_PIN 12 // Terhubung ke RX Modul GPS
+#define GPS_BAUDRATE 9600
+
+TinyGPSPlus gps;
+HardwareSerial gpsSerial(1); // HardwareSerial 1 untuk GPS
+
+// Koordinat default (fallback jika GPS belum lock)
+double currentLat = -7.283749;
+double currentLng = 112.805076;
 
 // ============================================================
 //  INTERVAL
 // ============================================================
 const unsigned long SENSOR_INTERVAL_MS = 2000;   // baca sensor + publish JSON
 const unsigned long POWER_INTERVAL_MS  = 2000;   // publish V/A/W (masih simulasi)
+const unsigned long GPS_INTERVAL_MS    = 5000;   // publish lokasi tiap 5 detik
 
 unsigned long lastSensorSend = 0;
 unsigned long lastPowerSend  = 0;
+unsigned long lastGpsSend    = 0;
 
 // ============================================================
 //  STATE VFD
@@ -136,47 +152,6 @@ void applyFrequencyToOutput() {
   }
   float targetVolt = (vfdFreq / VFD_FREQ_MAX) * VFD_VOLT_MAX;
   setOutputVoltage(targetVolt);
-}
-
-// ============================================================
-//  TOMBOL FISIK & RELAY KENDALI UTAMA
-// ============================================================
-#define PIN_PB_START 14  // Tombol NO (Hubungkan ke GND)
-#define PIN_PB_STOP  27  // Tombol NC (Hubungkan ke GND)
-#define PIN_RELAY    32  // Output Relay ke VFD/Beban
-
-// Pusat Logika Sinkronisasi Start/Stop Sistem
-void updateVfdState(bool startSystem) {
-  vfdRunning = startSystem;
-  
-  if (vfdRunning) {
-    digitalWrite(PIN_RELAY, HIGH); // Aktifkan Relay (Ganti ke LOW jika modul Active-Low)
-    applyFrequencyToOutput();      // Keluarkan voltase sesuai setpoint Hz
-    Serial.println("[SYSTEM] VFD -> RUNNING (Relay ON)");
-  } else {
-    digitalWrite(PIN_RELAY, LOW);  // Matikan Relay (Ganti ke HIGH jika modul Active-Low)
-    setOutputVoltage(0.0);         // Potong voltase langsung ke 0V
-    Serial.println("[SYSTEM] VFD -> STOPPED (Relay OFF)");
-  }
-}
-
-void checkPhysicalButtons() {
-  // Membaca PB START (Normally Open) -> Ditekan = LOW
-  if (digitalRead(PIN_PB_START) == LOW && !vfdRunning) {
-    delay(50); // Debounce manual singkat
-    if (digitalRead(PIN_PB_START) == LOW) {
-      updateVfdState(true);
-      WiFiClientSecure espClient; // (Inisialisasi referensi untuk objek mqtt)
-    }
-  }
-  
-  // Membaca PB STOP (Normally Close) -> Ditekan = Sirkuit Putus = HIGH
-  if (digitalRead(PIN_PB_STOP) == HIGH && vfdRunning) {
-    delay(50); // Debounce manual singkat
-    if (digitalRead(PIN_PB_STOP) == HIGH) {
-      updateVfdState(false);
-    }
-  }
 }
 
 /* ============================================================
@@ -218,9 +193,9 @@ const float K_TDS = 0.5f;
 const float DOsatTable_mgL[41] = {
   14.6,14.2,13.8,13.5,13.1,12.8,12.5,12.1,11.8,11.5,
   11.3,11.0,10.8,10.5,10.3,10.1, 9.9, 9.7, 9.5, 9.3,
-  9.1, 8.9, 8.7, 8.6, 8.4, 8.3, 8.1, 8.0, 7.8, 7.7,
-  7.6, 7.5, 7.4, 7.3, 7.2, 7.1, 7.0, 6.9, 6.8, 6.7,
-  6.6
+   9.1, 8.9, 8.7, 8.6, 8.4, 8.3, 8.1, 8.0, 7.8, 7.7,
+   7.6, 7.5, 7.4, 7.3, 7.2, 7.1, 7.0, 6.9, 6.8, 6.7,
+   6.6
 };
 
 const uint8_t READ_DIRTY[5] = {0x18, 0x05, 0x00, 0x01, 0x0D};
@@ -286,7 +261,7 @@ void readAllSensors() {
     if (f[0] == 0x18 && f[1] == 0x05 && f[4] == 0x0D) {
       turbidityValue = f[3];
     } else {
-      Serial.println("⚠️  Frame turbidity tidak valid");
+      Serial.println("Frame turbidity tidak valid");
     }
   }
   turbidityValue = constrain(turbidityValue, TURBIDITY_MIN, TURBIDITY_MAX);
@@ -296,7 +271,7 @@ void readAllSensors() {
 }
 
 /* ============================================================
-   DAYA LISTRIK — Simulasi
+   DAYA LISTRIK — Simulasi (belum ada sensor listrik asli)
    ============================================================ */
 struct SimSensor { float value, jitter, minV, maxV; };
 SimSensor voltSim = {220.0, 1.5,  200.0, 240.0};
@@ -310,10 +285,17 @@ float randomWalk(SimSensor &s) {
 }
 
 // ============================================================
-//  WIFI & MQTT
+//  WIFI & MQTT — objek didefinisikan di sini, SEBELUM kode tombol,
+//  supaya checkPhysicalButtons() bisa langsung publish status motor.
 // ============================================================
 WiFiClientSecure espClient;
-PubSubClient     mqtt(espClient);
+PubSubClient mqtt(espClient);
+
+void publishVfdStatusIfConnected() {
+  if (mqtt.connected()) {
+    mqtt.publish(TOPIC_VFD_STATUS, vfdRunning ? "RUNNING" : "STOPPED");
+  }
+}
 
 void connectWiFi() {
   Serial.print("Menyambungkan ke WiFi: ");
@@ -334,6 +316,51 @@ void connectWiFi() {
 
   sendNextionText("tWifi", "Connected");
   sendNextionColor("tWifi", COLOR_GREEN);
+}
+
+// ============================================================
+//  TOMBOL FISIK & RELAY KENDALI UTAMA
+//  START = Normally Open (NO)  -> tertekan = LOW (saklar terhubung ke GND)
+//  STOP  = Normally Closed (NC) -> tertekan/aktif = HIGH (rangkaian NC terputus)
+// ============================================================
+#define PIN_PB_START 14
+#define PIN_PB_STOP  27
+#define PIN_RELAY    32
+
+void updateVfdState(bool startSystem) {
+  vfdRunning = startSystem;
+
+  if (vfdRunning) {
+    digitalWrite(PIN_RELAY, HIGH);
+    applyFrequencyToOutput();
+    Serial.println("[SYSTEM] VFD -> RUNNING (Relay ON)");
+  } else {
+    digitalWrite(PIN_RELAY, LOW);
+    setOutputVoltage(0.0);
+    Serial.println("[SYSTEM] VFD -> STOPPED (Relay OFF)");
+  }
+}
+
+void checkPhysicalButtons() {
+  // START (NO): level LOW = ditekan. Guard !vfdRunning supaya tidak re-trigger selama ditahan.
+  if (digitalRead(PIN_PB_START) == LOW && !vfdRunning) {
+    delay(50); // debounce
+    if (digitalRead(PIN_PB_START) == LOW) {
+      updateVfdState(true);
+      publishVfdStatusIfConnected();   // FIX: sinkronkan ke MQTT/dashboard
+      Serial.println("[BUTTON] START fisik ditekan");
+    }
+  }
+
+  // STOP (NC): level HIGH = rangkaian NC terputus (aktif/ditekan). Guard vfdRunning.
+  if (digitalRead(PIN_PB_STOP) == HIGH && vfdRunning) {
+    delay(50); // debounce
+    if (digitalRead(PIN_PB_STOP) == HIGH) {
+      updateVfdState(false);
+      publishVfdStatusIfConnected();   // FIX: sinkronkan ke MQTT/dashboard
+      Serial.println("[BUTTON] STOP fisik ditekan");
+    }
+  }
 }
 
 void mqttCallback(char* topic, byte* payload, unsigned int length) {
@@ -363,11 +390,14 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
 
 void publishLocation() {
   JsonDocument doc;
-  doc["lat"] = NODE_LAT;
-  doc["lng"] = NODE_LNG;
-  char buf[128];
+  doc["lat"] = currentLat;
+  doc["lng"] = currentLng;
+  doc["fix"] = gps.location.isValid();   // true = GPS asli sudah lock, false = masih default
+  char buf[160];
   serializeJson(doc, buf);
   mqtt.publish(TOPIC_LOCATION, buf);
+  Serial.printf("[MQTT OUT] Lokasi -> Lat: %.6f, Lng: %.6f, Fix: %s\n",
+                currentLat, currentLng, gps.location.isValid() ? "YA" : "TIDAK (default)");
 }
 
 void connectMQTT() {
@@ -385,7 +415,7 @@ void connectMQTT() {
       mqtt.subscribe(TOPIC_VFD_FREQ);
       mqtt.publish(TOPIC_VFD_STATUS, vfdRunning ? "RUNNING" : "STOPPED");
       publishLocation();
-      updateVfdState(vfdRunning); 
+      updateVfdState(vfdRunning);
     } else {
       Serial.printf(" gagal rc=%d, coba lagi 3 detik...\n", mqtt.state());
       sendNextionText("tBroker", "Disconnected");
@@ -448,6 +478,15 @@ void updateNextionDisplay() {
   sendNextionText("tAmp",  String(ampSim.value,  2) + " A");
   sendNextionText("tWatt", String(voltSim.value * ampSim.value, 0) + " W");
 
+  // Status GPS fix di Nextion (opsional, kalau ada komponen "tGPS" di project Nextion-mu)
+  if (gps.location.isValid()) {
+    sendNextionText("tGPS", "GPS Live");
+    sendNextionColor("tGPS", COLOR_GREEN);
+  } else {
+    sendNextionText("tGPS", "Lokasi Default");
+    sendNextionColor("tGPS", COLOR_YELLOW);
+  }
+
   if (WiFi.status() == WL_CONNECTED) {
     sendNextionText("tWifi", "Connected");
     sendNextionColor("tWifi", COLOR_GREEN);
@@ -477,10 +516,7 @@ void checkNextionInput() {
       } else if (cmd == "STOP") {
         updateVfdState(false);
       }
-
-      if (mqtt.connected()) {
-        mqtt.publish(TOPIC_VFD_STATUS, vfdRunning ? "RUNNING" : "STOPPED");
-      }
+      publishVfdStatusIfConnected();
     }
   }
 }
@@ -492,18 +528,22 @@ void setup() {
   Serial.begin(115200);
   randomSeed(esp_random());
 
-  // --- Konfigurasi Hardware Tombol & Relay ---
+  // --- Modul GPS NEO-6M ---
+  gpsSerial.begin(GPS_BAUDRATE, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
+  Serial.println("Serial GPS diinisialisasi pada Pin 13(RX) & Pin 12(TX).");
+
+  // --- Tombol & Relay ---
   pinMode(PIN_PB_START, INPUT_PULLUP);
   pinMode(PIN_PB_STOP, INPUT_PULLUP);
   pinMode(PIN_RELAY, OUTPUT);
-  digitalWrite(PIN_RELAY, LOW); // Awal booting relay mati
+  digitalWrite(PIN_RELAY, LOW);
 
   // --- VFD via PWM-to-0-10V ---
   ledcSetup(PWM_CHANNEL, PWM_FREQ_HZ, PWM_RESOLUTION);
   ledcAttachPin(PWM_PIN, PWM_CHANNEL);
   setOutputVoltage(0.0);
 
-  // --- Inisialisasi sensor air ASLI ---
+  // --- Sensor air asli ---
   analogSetPinAttenuation(DO_PIN, ADC_11db);
   analogSetPinAttenuation(SALINITY_PIN, ADC_11db);
   analogReadResolution(12);
@@ -514,10 +554,8 @@ void setup() {
   tdsSensor.begin();
 
   ec.begin();
-
   tempSensors.begin();
   tempSensors.setResolution(12);
-
   turbiditySerial.begin(9600);
 
   // --- Nextion & WiFi/MQTT ---
@@ -537,6 +575,16 @@ void loop() {
   if (!mqtt.connected())             connectMQTT();
   mqtt.loop();
 
+  // Non-blocking: terus baca aliran data GPS
+  while (gpsSerial.available() > 0) {
+    if (gps.encode(gpsSerial.read())) {
+      if (gps.location.isValid()) {
+        currentLat = gps.location.lat();
+        currentLng = gps.location.lng();
+      }
+    }
+  }
+
   checkNextionInput();
   checkPhysicalButtons();
 
@@ -544,8 +592,13 @@ void loop() {
 
   if (now - lastSensorSend >= SENSOR_INTERVAL_MS) {
     lastSensorSend = now;
-    readAllSensors();   // baca sensor air ASLI
-    publishSensors();   // kirim hasil baca ke MQTT
+    readAllSensors();
+    publishSensors();
+  }
+
+  if (now - lastGpsSend >= GPS_INTERVAL_MS) {
+    lastGpsSend = now;
+    publishLocation();
   }
 
   if (now - lastNextionUpdate >= NEXTION_UPDATE_INTERVAL) {
