@@ -327,15 +327,17 @@ void connectWiFi() {
 #define PIN_PB_STOP  27
 #define PIN_RELAY    32
 
+// Relay yang dipakai bersifat ACTIVE-LOW: LOW = ON (coil aktif), HIGH = OFF.
+// Kalau modul relay kamu ternyata active-HIGH, tukar kembali LOW<->HIGH di bawah.
 void updateVfdState(bool startSystem) {
   vfdRunning = startSystem;
 
   if (vfdRunning) {
-    digitalWrite(PIN_RELAY, HIGH);
+    digitalWrite(PIN_RELAY, LOW);    // ON (active-low)
     applyFrequencyToOutput();
     Serial.println("[SYSTEM] VFD -> RUNNING (Relay ON)");
   } else {
-    digitalWrite(PIN_RELAY, LOW);
+    digitalWrite(PIN_RELAY, HIGH);   // OFF (active-low)
     setOutputVoltage(0.0);
     Serial.println("[SYSTEM] VFD -> STOPPED (Relay OFF)");
   }
@@ -536,7 +538,7 @@ void setup() {
   pinMode(PIN_PB_START, INPUT_PULLUP);
   pinMode(PIN_PB_STOP, INPUT_PULLUP);
   pinMode(PIN_RELAY, OUTPUT);
-  digitalWrite(PIN_RELAY, LOW);
+  digitalWrite(PIN_RELAY, HIGH);  // OFF saat boot (relay active-LOW)
 
   // --- VFD via PWM-to-0-10V ---
   ledcSetup(PWM_CHANNEL, PWM_FREQ_HZ, PWM_RESOLUTION);
