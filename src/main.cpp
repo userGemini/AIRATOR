@@ -64,8 +64,8 @@ bool initNextion() {
 // ============================================================
 //  KONFIGURASI WIFI
 // ============================================================
-const char* WIFI_SSID     = "Lab Robotika AI";
-const char* WIFI_PASSWORD = "labrobotm101";
+const char* WIFI_SSID     = "AERATOR";
+const char* WIFI_PASSWORD = "12345678";
 
 // ============================================================
 //  KONFIGURASI BROKER HIVEMQ
