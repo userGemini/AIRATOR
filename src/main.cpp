@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#include <HTTPClient.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 #include <OneWire.h>
@@ -64,8 +65,11 @@ bool initNextion() {
 // ============================================================
 //  KONFIGURASI WIFI
 // ============================================================
-const char* WIFI_SSID     = "AERATOR";
-const char* WIFI_PASSWORD = "12345678";
+// const char* WIFI_SSID     = "AERATOR";
+// const char* WIFI_PASSWORD = "12345678";
+
+const char* WIFI_SSID     = "Lab Robotika AI";
+const char* WIFI_PASSWORD = "labrobotm101";
 
 // ============================================================
 //  KONFIGURASI BROKER HIVEMQ
@@ -75,6 +79,11 @@ const int   MQTT_PORT      = 8883;
 const char* MQTT_USER      = "AIRATOR";
 const char* MQTT_PASS      = "airatorPPNS1";
 const char* MQTT_CLIENT_ID = "esp32-airator-01";
+
+// ============================================================
+//  KONFIGURASI GOOGLE SHEETS
+// ============================================================
+const String GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbwuurNI_r6ZxP-TYsILpTR00_68Arg9iI5Zh--SM-UdnPZOqZVg9arVIQATceJh9lHL/exec";
 
 // ============================================================
 //  TOPIK MQTT
@@ -106,11 +115,13 @@ double currentLng = 112.805076;
 // ============================================================
 const unsigned long SENSOR_INTERVAL_MS = 2000;   
 const unsigned long POWER_INTERVAL_MS  = 2000;   
-const unsigned long GPS_INTERVAL_MS    = 5000; 
+const unsigned long GPS_INTERVAL_MS    = 5000;
+const unsigned long SHEETS_INTERVAL_MS = 30000; // <-- TAMBAHKAN INI (30000 ms = 30 detik)
 
 unsigned long lastSensorSend = 0;
 unsigned long lastPowerSend  = 0;
 unsigned long lastGpsSend    = 0;
+unsigned long lastSheetsSend = 0;                // <-- TAMBAHKAN INI
 
 // ============================================================
 //  STATE VFD
@@ -452,6 +463,53 @@ void publishPower() {
   mqtt.publish(TOPIC_WATT, bufW);
 }
 
+void simpanKeGoogleSheets() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[HTTP] WiFi terputus!");
+    return;
+  }
+
+  char bufPh[10], bufTurb[10], bufTds[10], bufSal[10], bufOks[10], bufTemp[10];
+  dtostrf(phValue,        1, 2, bufPh);   String sPh(bufPh);     sPh.trim();
+  dtostrf(turbidityValue, 1, 1, bufTurb); String sTurb(bufTurb); sTurb.trim();
+  dtostrf(tdsValue,       1, 0, bufTds);  String sTds(bufTds);   sTds.trim();
+  dtostrf(salinityValue,  1, 2, bufSal);  String sSal(bufSal);   sSal.trim();
+  dtostrf(doValue,        1, 2, bufOks);  String sOks(bufOks);   sOks.trim();
+  dtostrf(waterTemp,      1, 1, bufTemp); String sTemp(bufTemp); sTemp.trim();
+
+  String payload = "?ph=" + sPh
+                 + "&turbidity=" + sTurb
+                 + "&tds="       + sTds
+                 + "&salinity="  + sSal
+                 + "&oksigen="   + sOks
+                 + "&temp="      + sTemp;
+
+  // Buat client SSL baru khusus untuk request ini
+  WiFiClientSecure client;
+  client.setInsecure();
+  client.setTimeout(15);
+
+  HTTPClient http;
+  http.begin(client, GOOGLE_SCRIPT_URL + payload);
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+  http.setTimeout(15000);
+  http.addHeader("Connection", "close"); // ✅ Paksa tutup koneksi setelah selesai
+
+  Serial.println("[HTTP] URL: " + GOOGLE_SCRIPT_URL + payload);
+
+  int httpCode = http.GET();
+  Serial.println("[HTTP] Code: " + String(httpCode));
+
+  if (httpCode > 0) {
+    Serial.println("[HTTP] Respon: " + http.getString());
+  } else {
+    Serial.println("[HTTP] Error: " + http.errorToString(httpCode));
+  }
+
+  http.end();
+  client.stop(); // ✅ Pastikan koneksi ditutup
+}
+
 void updateNextionDisplay() {
   if (!nextionAvailable) return;
 
@@ -602,5 +660,10 @@ void loop() {
   if (now - lastPowerSend >= POWER_INTERVAL_MS) {
     lastPowerSend = now;
     publishPower();
+  }
+  // === TAMBAHKAN BLOK LOGIKA INI DI PALING BAWAH LOOP ===
+  if (now - lastSheetsSend >= SHEETS_INTERVAL_MS) {
+    lastSheetsSend = now;
+    simpanKeGoogleSheets(); // Memanggil fungsi pencatatan log ke Google Sheets
   }
 }
